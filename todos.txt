@@ -1,0 +1,13 @@
+
+
+find loss for conformal (theory derivation, ask peter, find paper)
+
+
+metrics:
+global isotropic,
+global scaled isotropic,
+local scaled isotropic,
+conformal,
+volume preserving,
+nvidia paper (https://arxiv.org/pdf/2410.10733),
+Equivariance Regularized Latent Space
