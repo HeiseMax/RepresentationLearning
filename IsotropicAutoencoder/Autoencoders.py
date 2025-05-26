@@ -16,14 +16,11 @@ class Autoencoder(nn.Module):
         self.decoder = decoder
         self.model = nn.Sequential(self.encoder, self.decoder)
 
-        self.optimizer = None
-        self.scheduler = None
-        self.epoch = 0
-
+        self.epochs_trained = 0
         self.loss_list = []
         self.val_loss_list = []
-        self.losses_list = {"reconstruction_loss": []}
-        self.val_losses_list = {"reconstruction_loss": []}
+        self.metrics_list = {"reconstruction_loss": []}
+        self.val_metrics_list = {"reconstruction_loss": []}
     
     def forward(self, x):
         # Encode the input data
@@ -48,57 +45,60 @@ class Autoencoder(nn.Module):
     
 
     # define for specialized autoencoders
-    def get_losses(self, x):
-        # Compute the reconstruction loss
+    def get_metrics(self, x, val=False):
+        # Compute all relevant metrics
         x_reconstructed = self.forward(x)
         loss = nn.MSELoss()(x_reconstructed, x)
         return [loss]
     
-    def combined_loss(self, losses):
-        # Combine the losses for training
-        return losses[0]
+    def get_loss(self, metrics):
+        # Combine metrics to compute loss
+        return metrics[0]
     
     def get_batch_loss(self, loss_list):
         # Compute the average loss for the batch
-        batch_loss = torch.mean(torch.tensor(loss_list[0]))
+        batch_loss = torch.mean(torch.tensor(loss_list))
         return batch_loss
     
-    def get_batch_losses(self, losses_list):
-        # Compute the average loss for the batch
-        batch_loss = torch.mean(torch.tensor(losses_list[0]))
-        return batch_loss
+    def get_batch_metrics(self, metrics):
+        # Compute the average metrics for the batch
+        batch_metrics = torch.mean(torch.tensor(metrics)[:,0]).item()
+        return [batch_metrics]
     
-    def log_loss(self, batch_loss, batch_losses, epoch, epochs, val=False):
-        # Log the losses for monitoring
+    def log_loss_and_metrics(self, batch_loss, batch_metrics, epoch, epochs, val=False):
+        # Log the loss and metrics for monitoring
         loss = batch_loss       
         if val:
             print(f'Epoch [{epoch + 1}/{epochs}], Validation Loss: {loss.item():.4f}')
         else:
             print(f'Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}')
 
-    def track_loss(self, batch_loss, batch_losses, val=False):
-        # Track the loss for monitoring
+    def track_loss_and_metrics(self, batch_loss, batch_metrics, val=False):
+        # Track and save the loss and metrics for monitoring
         loss = batch_loss
         if val:
             self.val_loss_list.append(loss.item())
-            self.val_losses_list["reconstruction_loss"].append(batch_losses.item())
+            self.val_metrics_list["reconstruction_loss"].append(batch_metrics[0])
         else:
             self.loss_list.append(loss.item())
-            self.losses_list["reconstruction_loss"].append(batch_losses.item())
+            self.metrics_list["reconstruction_loss"].append(batch_metrics[0])
+
+
+    # default optimizer and scheduler
+    def get_default_optimizer(self, learning_rate=0.001, optimizer_kwargs={}):
+        return Adam(self.parameters(), lr=learning_rate, **optimizer_kwargs)
+    
+    def get_default_scheduler(self, optimizer, scheduler_kwargs={"step_size":100, "gamma":0.1}):
+        return StepLR(optimizer, **scheduler_kwargs)
 
     
     # train loop
-    def train_model(self, data, val_data=None, epochs=1000, batch_size=64, learning_rate=0.001, optimizerclass=Adam, schedulerclass=StepLR, optimizer_kwargs={}, scheduler_kwargs={"step_size":100, "gamma":0.1}, log_every=100, val_every=100, verbose=True):        
+    def train_model(self, data, val_data=None, epochs=1000, batch_size=64, learning_rate=0.001, optimizer=None, scheduler=None, optimizer_kwargs={}, scheduler_kwargs={"step_size":100, "gamma":0.1}, log_every=100, val_every=100, verbose=True):        
         # Define optimizer and scheduler
-        # Make function again that manages creation and loading of optimizers and schedulers?
-        if self.optimizer is None:
-            optimizer = optimizerclass(self.parameters(), lr=learning_rate, **optimizer_kwargs)
-        else:
-            optimizer = self.optimizer
-        if self.scheduler is None:
-            scheduler = schedulerclass(optimizer, **scheduler_kwargs)
-        else:
-            scheduler = self.scheduler
+        if optimizer is None:
+            optimizer = self.get_default_optimizer(learning_rate, optimizer_kwargs)
+        if scheduler is None:
+            scheduler = self.get_default_scheduler(optimizer, scheduler_kwargs)
         
         # Define data loaders
         dataloader = DataLoader(data, batch_size=batch_size, shuffle=True)
@@ -109,15 +109,15 @@ class Autoencoder(nn.Module):
         
         # Training loop
         for epoch in range(epochs):
-            self.epoch += 1
+            self.epochs_trained += 1
             self.model.train()
             loss_list = []
-            losses_list = []
+            metrics_list = []
             for batch_data in dataloader:
                 # Compute loss
-                losses = self.get_losses(batch_data)
-                losses_list.append(losses)
-                loss = self.combined_loss(losses)
+                metrics = self.get_metrics(batch_data)
+                metrics_list.append(metrics)
+                loss = self.get_loss(metrics)
                 loss_list.append(loss.item())
                 
                 # Backward pass and optimization
@@ -126,11 +126,11 @@ class Autoencoder(nn.Module):
                 optimizer.step()
             
             batch_loss = self.get_batch_loss(loss_list)
-            batch_losses = self.get_batch_losses(losses_list)
-            self.track_loss(batch_loss, batch_losses)
+            batch_metrics = self.get_batch_metrics(metrics_list)
+            self.track_loss_and_metrics(batch_loss, batch_metrics, val=False)
 
             if (epoch + 1) % log_every == 0 and verbose:
-                self.log_loss(batch_loss, batch_losses, epoch, epochs)
+                self.log_loss_and_metrics(batch_loss, batch_metrics, epoch, epochs)
 
             # Step the scheduler
             if scheduler is not None:
@@ -144,20 +144,21 @@ class Autoencoder(nn.Module):
                 self.model.eval()
                 with torch.no_grad():
                     val_loss_list = []
-                    val_losses_list = []
+                    val_metrics_list = []
                     for val_batch_data in val_dataloader:
-                        val_losses = self.get_losses(val_batch_data)
-                        val_losses_list.append(val_losses)
-                        val_loss = self.combined_loss(val_losses)
+                        val_metrics = self.get_metrics(val_batch_data, val=True)
+                        val_metrics_list.append(val_metrics)
+                        val_loss = self.get_loss(val_metrics)
                         val_loss_list.append(val_loss.item())
 
                 val_batch_loss = self.get_batch_loss(val_loss_list)
-                val_batch_losses = self.get_batch_losses(val_losses_list)
-                self.track_loss(val_batch_loss, val_batch_losses, val=True)
+                val_batch_metrics = self.get_batch_metrics(val_metrics_list)
+                self.track_loss_and_metrics(val_batch_loss, val_batch_metrics, val=True)
 
                 if verbose:
-                    self.log_loss(val_batch_loss, val_batch_losses, epoch, epochs, val=True)
+                    self.log_loss_and_metrics(val_batch_loss, val_batch_metrics, epoch, epochs, val=True)
 
+        return optimizer, scheduler
 
     # Save and load model
     def save_checkpoint(self, filepath="checkpoint.pth"):
@@ -166,18 +167,16 @@ class Autoencoder(nn.Module):
         and custom class variables to a checkpoint file.
         """
         checkpoint = {
-            'epoch': self.epoch,
+            'epochs_trained': self.epochs_trained,
             'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
-            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'loss_list': self.loss_list,
             'val_loss_list': self.val_loss_list,
-            'losses_list': self.losses_list,
-            'val_losses_list': self.val_losses_list,
+            'metrics_list': self.metrics_list,
+            'val_metrics_list': self.val_metrics_list,
             # Add any other class variables you want to save
         }
         torch.save(checkpoint, filepath)
-        print(f"Checkpoint saved to {filepath} at epoch {self.epoch + 1}")
+        print(f"Checkpoint saved to {filepath} at epoch {self.epochs_trained + 1}")
 
     def load_model_from_checkpoint(self, filepath):
         """
@@ -189,14 +188,12 @@ class Autoencoder(nn.Module):
             raise FileNotFoundError(f"Checkpoint file not found: {filepath}")
 
         checkpoint = torch.load(filepath)
-        self.epoch = checkpoint['epoch']
+        self.epochs_trained = checkpoint['epochs_trained']
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict']) # Fix Optimizer and Scheduler loading
-        # self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.loss_list = checkpoint['loss_list']
         self.val_loss_list = checkpoint['val_loss_list']
-        self.losses_list = checkpoint['losses_list']
-        self.val_losses_list = checkpoint['val_losses_list']
+        self.metrics_list = checkpoint['metrics_list']
+        self.val_metrics_list = checkpoint['val_metrics_list']
         print(f"Model and custom variables loaded from {filepath}")
         return self
 
