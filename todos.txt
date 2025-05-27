@@ -1,3 +1,6 @@
+Autoencoder Model:
+make metrics (like conformal loss) parameterizable and changeable
+
 
 
 find loss for conformal (theory derivation, ask peter, find paper)
