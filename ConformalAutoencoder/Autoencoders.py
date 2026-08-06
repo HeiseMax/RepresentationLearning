@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 from torch.autograd.functional import jvp
 from torch.autograd.functional import jacobian
 
-from metrics import isometry_loss, scaled_isometry_loss, conformality_loss, generalized_conformal_loss
+from metrics import isometry_loss, scaled_isometry_loss, conformality_trace_loss as conformality_loss
 
 
 class Autoencoder(nn.Module):
@@ -191,6 +191,70 @@ class Autoencoder(nn.Module):
         print(f"Model and custom variables loaded from {filepath}")
         return self
 
+
+class VariationalAutoencoder(Autoencoder):
+    def __init__(self, encoder, decoder, latent_dim, beta=1.0):
+        super(VariationalAutoencoder, self).__init__(encoder, decoder)
+        self.name = "VariationalAutoencoder"
+        self.latent_dim = latent_dim
+        self.beta = beta
+
+        self.metrics_list = {"reconstruction_loss": [], "kl_loss": []}
+        self.val_metrics_list = {"reconstruction_loss": [], "kl_loss": []}
+
+    def encode(self, x):
+        # Encoder should output mean and logvar
+        mu, logvar = self.encoder(x)
+        return mu, logvar
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        x_reconstructed = self.decoder(z)
+        return x_reconstructed, mu, logvar
+
+    def get_metrics(self, x, val=False):
+        x_reconstructed, mu, logvar = self.forward(x)
+        reconstruction_loss = nn.MSELoss()(x_reconstructed, x)
+        # KL divergence loss
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / x.size(0)
+        return [reconstruction_loss, kl_loss]
+
+    def get_loss(self, metrics):
+        reconstruction_loss, kl_loss = metrics
+        return reconstruction_loss + self.beta * kl_loss
+
+    def get_batch_loss(self, loss_list):
+        batch_loss = torch.mean(torch.tensor(loss_list))
+        return batch_loss
+
+    def get_batch_metrics(self, metrics):
+        batch_reconstruction_loss = torch.mean(torch.tensor(metrics)[:, 0]).item()
+        batch_kl_loss = torch.mean(torch.tensor(metrics)[:, 1]).item()
+        return [batch_reconstruction_loss, batch_kl_loss]
+
+    def log_loss_and_metrics(self, batch_loss, batch_metrics, epoch, epochs, val=False):
+        reconstruction_loss, kl_loss = batch_metrics
+        if val:
+            print(f'Epoch [{epoch + 1}/{epochs}], Validation Loss: {batch_loss:.8f}, Reconstruction Loss: {reconstruction_loss:.8f}, KL Loss: {kl_loss:.8f}')
+        else:
+            print(f'Epoch [{epoch + 1}/{epochs}], Loss: {batch_loss:.8f}, Reconstruction Loss: {reconstruction_loss:.8f}, KL Loss: {kl_loss:.8f}')
+
+    def track_loss_and_metrics(self, batch_loss, batch_metrics, val=False):
+        reconstruction_loss, kl_loss = batch_metrics
+        if val:
+            self.val_loss_list.append(batch_loss)
+            self.val_metrics_list["reconstruction_loss"].append(reconstruction_loss)
+            self.val_metrics_list["kl_loss"].append(kl_loss)
+        else:
+            self.loss_list.append(batch_loss)
+            self.metrics_list["reconstruction_loss"].append(reconstruction_loss)
+            self.metrics_list["kl_loss"].append(kl_loss)
 
 
 class IsometricAutoencoder(Autoencoder):

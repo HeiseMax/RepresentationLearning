@@ -1,9 +1,28 @@
 Autoencoder Model:
 make metrics (like conformal loss) parameterizable and changeable
+lambda iso, conf -> lambda
 
 
 
+
+
+
+reconstruction quality per regularization
 find loss for conformal (theory derivation, ask peter, find paper)
+loss metric vs trainable form
+augmentation
+MNIST (with pyAE something)
+conditional MNIST
+FFHQ
+reconstruction loss is not the best, log recon?
+
+
+test disentanglement metrics on the autoencoders (disentanglement is not the goal)
+
+
+
+
+
 
 
 metrics:
@@ -11,6 +30,7 @@ global isotropic,
 global scaled isotropic,
 local scaled isotropic,
 conformal,
+diagonality
 volume preserving,
 nvidia paper (https://arxiv.org/pdf/2410.10733),
 Equivariance Regularized Latent Space
